@@ -19,15 +19,17 @@ const globMatch = R.compose(
     R.map(R.compose(R.test, globToRegExp(_, {flags: 'i', extended: true})))
 )
 
-const readFirstLineAsync = (filepath, encoding='utf8') => new Promise((resolve, reject) => {
-    const readStream = fs.createReadStream(filepath, encoding)
-        .on('error', reject)
-    readline.createInterface({input: readStream})
-        .on('line', line => {
-            readStream.close()
-            resolve(line)
-        })
-})
+function readFirstLineAsync(filepath, encoding='utf8') {
+    return new Promise((resolve, reject) => {
+        const readStream = fs.createReadStream(filepath, encoding)
+            .on('error', reject)
+        readline.createInterface({input: readStream})
+            .on('line', line => {
+                readStream.close()
+                resolve(line)
+            })
+    })
+}
 
 function getBackupPolicyAsync(dir) {
     const policyfile = path.join(dir, '.backuppolicy')
