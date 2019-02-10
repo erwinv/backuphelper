@@ -148,7 +148,11 @@ function getBackupPaths(variant='reactive') {
         return R.mergeLeft(monad, {
             then: variant == 'async' ?
                 R.flip(R.then)(monad) :
-                R.flip(R.then)(monad.reduce([], R.flip(R.append)).toPromise(Promise)),
+                R.flip(R.then)(R.call(R.pipe(
+                    R.always(monad),
+                    R.invoker(2, 'reduce')([], R.flip(R.append)),
+                    R.invoker(1, 'toPromise')(Promise)
+                ))),
             onValue: variant == 'reactive' ?
                 R.flip(R.invoker(1, 'onValue'))(monad) :
                 R.compose(R.flip(R.then)(monad), R.forEach)
