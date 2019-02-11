@@ -295,14 +295,15 @@ if (runningAsMain) {
     }
 
     if (!useReactive) {
-        return getBackupPathsAsync(dir)
-            .then(forEach(console.log))
+        const promise = getBackupPathsAsync(dir)
+        return promise.then(forEach(console.log))
     }
 
+    const observable = getBackupPathsRx(dir)
     return eagerLogging ?
-        getBackupPathsRx(dir)
+        observable
             .onValue(console.log) :
-        getBackupPathsRx(dir)
+        observable
             .reduce([], flip(append))
             .toPromise(Promise)
             .then(forEach(console.log))
