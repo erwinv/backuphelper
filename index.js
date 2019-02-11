@@ -71,31 +71,18 @@ function getIgnorePatternsAsync(dir) {
 
 function getBackupPaths(variant='reactive') {
     const [
-        monadId,
         monadZero,
-        monadBind,
-        monadBindErr,
-        spread,
-        spreadMap
+        monadId, monadBind, monadBindErr,
+        spread, spreadMap
     ] =
     variant == 'async' ? [
-        Promise.resolve,
         Promise.resolve([]),
-        then,
-        otherwise,
-        identity,
-        mapFn => pipe(
-            map(mapFn),
-            Promise.all,
-            then(flatten)
-        )
+        Promise.resolve, then, otherwise,
+        identity, mapFn => pipe(map(mapFn), Promise.all, then(flatten))
     ] : [
-        compose(Bacon.fromPromise, Promise.resolve),
         Bacon.never(),
-        invoker(1, 'flatMap'),
-        invoker(1, 'flatMapError'),
-        Bacon.fromArray,
-        identity
+        compose(Bacon.fromPromise, Promise.resolve), invoker(1, 'flatMap'), invoker(1, 'flatMapError'),
+        Bacon.fromArray, identity
     ]
 
     function _getBackupPaths(dir, parentpolicy='branch', parentignorepatterns=[]) {
@@ -260,9 +247,9 @@ function getBackupPathsRx(dir, parentpolicy='branch', parentignorepatterns=[]) {
                 flatMap(fullpath => call(pipe(
                     always(fullpath),
                     statAsync,
-                    otherwise(always({isFile: F, isDirectory: F})),
                     then(stats => ({fullpath, stats})),
-                    Bacon.fromPromise
+                    Bacon.fromPromise,
+                    flatMapError(always(Bacon.never())),
                 ))),
                 flatMap(({fullpath, stats}) =>
                     stats.isFile() ? Bacon.once(fullpath) :
@@ -289,6 +276,7 @@ if (runningAsMain) {
     const args = drop(2, process.argv)
     const [opts, [dir]] = partition(startsWith('--'), args)
 
+    const useUnifiedImpl = opts.includes('--unified')
     const useReactive = !opts.includes('--async') || opts.includes('--reactive')
     const eagerLogging = !opts.includes('--silent') || opts.includes('--verbose')
     // silent (non-eager logging) means dump all results at the very end,
@@ -298,7 +286,6 @@ if (runningAsMain) {
     // --reactive supports both eager and non-eager logging
     // --async doesn't support eager logging (go figure)
 
-    const useUnifiedImpl = opts.includes('--unified')
     if (useUnifiedImpl) {
         const variant = useReactive ? 'reactive' : 'async'
         const monad = getBackupPaths(variant)(dir)
