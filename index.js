@@ -249,7 +249,7 @@ function getBackupPathsRx(dir, parentpolicy='branch', parentignorepatterns=[]) {
                     statAsync,
                     then(stats => ({fullpath, stats})),
                     Bacon.fromPromise,
-                    flatMapError(always(Bacon.never())),
+                    flatMapError(always(Bacon.never()))
                 ))),
                 flatMap(({fullpath, stats}) =>
                     stats.isFile() ? Bacon.once(fullpath) :
@@ -271,6 +271,9 @@ Object.assign(module.exports, {
 
 const runningAsMain = require.main == module && !module.parent
 if (runningAsMain) {
+    const console = require('console')
+    const process = require('process')
+
     if (process.argv.length < 3)
         return console.error('no dirpath given')
     const args = drop(2, process.argv)
