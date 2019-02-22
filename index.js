@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const readline = require('readline')
 
@@ -15,10 +16,10 @@ const statAsync = Promise.promisify(fs.stat)
 const readFileAsync = R.curryN(2, Promise.promisify(fs.readFile))(_, 'utf8')
 
 const {
-    always, not, flip,
+    always, not, flip, divide, max,
     call, pipe, compose,
     then, otherwise,
-    map, filter, forEach, drop, append, partition,
+    length, map, filter, forEach, drop, append, partition,
     anyPass, includes,
     test, startsWith, split, trim,
     invoker
@@ -64,12 +65,15 @@ function getIgnorePatternsAsync(dir) {
     ))
 }
 
-function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns=[]) {
-    const globMatch = compose(
-        anyPass,
-        map(compose(test, globToRegExp(_, {flags: 'i', extended: true})))
-    )
+const globMatch = compose(
+    anyPass,
+    map(compose(test, globToRegExp(_, {flags: 'i', extended: true})))
+)
+const flatMapWCL = invoker(2, 'flatMapWithConcurrencyLimit')
+const flatMapError = invoker(1, 'flatMapError')
+const concurrencyLimit = compose(max(2), Math.floor, divide(_, 8), length)(os.cpus())
 
+function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns=[]) {
     const policyP = Promise.resolve(
         parentpolicy == 'branch' ?
             getBackupPolicyAsync(dir) :
@@ -82,9 +86,6 @@ function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns
     )
     const policyAndPatternsP = Promise.join(policyP, patternsP,
         (policy, ignorepatterns) => ({policy, ignorepatterns}))
-
-    const flatMapWCL = invoker(2, 'flatMapWithConcurrencyLimit')
-    const flatMapError = invoker(1, 'flatMapError')
 
     return call(pipe(
         always(policyAndPatternsP),
@@ -106,14 +107,14 @@ function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns
                     filter(compose(not, globMatch(ignorepatterns))),
                     Observable.fromArray
                 )),
-                flatMapWCL(3, fullpath => call(pipe(
+                flatMapWCL(concurrencyLimit, fullpath => call(pipe(
                     always(fullpath),
                     statAsync,
                     then(stats => ({fullpath, stats})),
                     Observable.fromPromise,
                     flatMapError(always(Observable.never()))
                 ))),
-                flatMapWCL(3, ({fullpath, stats}) =>
+                flatMapWCL(concurrencyLimit, ({fullpath, stats}) =>
                     stats.isFile() ? Observable.once(fullpath) :
                     stats.isDirectory() ? getBackupPathsReactive(fullpath, policy, ignorepatterns) :
                     Observable.never()
@@ -134,7 +135,7 @@ if (runningAsMain) {
     const console = require('console')
     const process = require('process')
 
-    if (process.argv.length < 3)
+    if (length(process.argv) < 3)
         return console.error('no dirpath given')
     const args = drop(2, process.argv)
     const [opts, [dir]] = partition(startsWith('--'), args)
