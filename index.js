@@ -48,7 +48,6 @@ const flatMapError = invoker(1, 'flatMapError')
 const concurrencyLimit = compose(max(4), Math.floor, divide(_, 8), length)(os.cpus())
 
 const getBackupPathsReactive = pipe(
-    Observable.fromPromise,
     flatMapWithConcurrencyLimit(1, ifElse(
         compose(equals('ignore'), prop('policy')),
         always(Observable.never()),
@@ -115,11 +114,12 @@ const resolveIgnorePatterns = ifElse(
 )
 
 function getBackupPaths(dir, parentPolicy='branch', parentIgnorePatterns=[]) {
-    return getBackupPathsReactive(Promise.join(
+    const policyAndIgnorePatterns = Promise.join(
         resolvePolicy({dir, parentPolicy}),
         resolveIgnorePatterns({dir, parentPolicy, parentIgnorePatterns}),
         (policy, ignorePatterns) => ({dir, policy, ignorePatterns})
-    ))
+    )
+    return getBackupPathsReactive(Observable.fromPromise(policyAndIgnorePatterns))
 }
 
 const runningAsMain = require.main == module && !module.parent
