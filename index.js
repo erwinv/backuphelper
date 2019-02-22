@@ -114,12 +114,12 @@ const resolveIgnorePatterns = ifElse(
 )
 
 function getBackupPaths(dir, parentPolicy='branch', parentIgnorePatterns=[]) {
-    const policyAndIgnorePatterns = Promise.join(
+    const dirPolicyAndIgnorePatterns = Promise.join(
         resolvePolicy({dir, parentPolicy}),
         resolveIgnorePatterns({dir, parentPolicy, parentIgnorePatterns}),
         (policy, ignorePatterns) => ({dir, policy, ignorePatterns})
     )
-    return getBackupPathsReactive(Observable.fromPromise(policyAndIgnorePatterns))
+    return getBackupPathsReactive(Observable.fromPromise(dirPolicyAndIgnorePatterns))
 }
 
 const runningAsMain = require.main == module && !module.parent
