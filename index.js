@@ -11,9 +11,9 @@ const R = require('ramda')
 const globToRegExp = R.curry(require('glob-to-regexp'))
 const _ = R.__
 
-const readdirAsync = Promise.promisify(fs.readdir)
-const statAsync = Promise.promisify(fs.stat)
 const readFileAsync = R.curryN(2, Promise.promisify(fs.readFile))(_, 'utf8')
+const readdirAsync = R.curryN(2, Promise.promisify(fs.readdir))(_, 'utf8')
+const statAsync = R.curryN(1, Promise.promisify(fs.stat))
 
 const {
     always, not, flip,
@@ -24,7 +24,7 @@ const {
     anyPass, includes,
     divide, max, equals,
     test, startsWith, split, trim,
-    prop, invoker
+    prop, invoker, thunkify
 } = R
 
 function readFirstLineAsync(filePath, encoding='utf8') {
@@ -53,8 +53,7 @@ const getBackupPathsReactive = pipe(
         compose(equals('ignore'), prop('policy')),
         always(Observable.never()),
         ({dir, policy, ignorePatterns}) => call(pipe(
-            always(dir),
-            readdirAsync,
+            thunkify(readdirAsync)(dir),
             Observable.fromPromise,
             flatMapError(always(Observable.never())),
             flatMapWithConcurrencyLimit(1, pipe(
@@ -68,8 +67,7 @@ const getBackupPathsReactive = pipe(
                 Observable.fromArray
             )),
             flatMapWithConcurrencyLimit(concurrencyLimit, fullPath => call(pipe(
-                always(fullPath),
-                statAsync,
+                thunkify(statAsync)(fullPath),
                 then(stats => ({fullPath, stats})),
                 Observable.fromPromise,
                 flatMapError(always(Observable.never()))
