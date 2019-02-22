@@ -16,9 +16,9 @@ const readdirAsync = R.curryN(2, Promise.promisify(fs.readdir))(_, 'utf8')
 const statAsync = R.curryN(1, Promise.promisify(fs.stat))
 
 const {
-    always, not, flip,
+    always, T, identity, not, flip,
     call, pipe, compose,
-    either, ifElse,
+    either, ifElse, cond,
     then, otherwise,
     length, map, filter, forEach, drop, append, partition,
     anyPass, includes,
@@ -68,15 +68,18 @@ const getBackupPathsReactive = pipe(
             )),
             flatMapWithConcurrencyLimit(concurrencyLimit, fullPath => call(pipe(
                 thunkify(statAsync)(fullPath),
-                then(stats => ({fullPath, stats})),
+                then(pipe(
+                    stats => ({isFile: stats.isFile(), isDirectory: stats.isDirectory()}),
+                    stats => ({fullPath, stats})
+                )),
                 Observable.fromPromise,
                 flatMapError(always(Observable.never()))
             ))),
-            flatMapWithConcurrencyLimit(concurrencyLimit, ({fullPath, stats}) =>
-                stats.isFile() ? Observable.once(fullPath) :
-                stats.isDirectory() ? getBackupPaths(fullPath, policy, ignorePatterns) :
-                Observable.never()
-            )
+            flatMapWithConcurrencyLimit(concurrencyLimit, cond([
+                [R.path(['stats', 'isFile']),       compose(Observable.once, prop('fullPath'))],
+                [R.path(['stats', 'isDirectory']),  compose(R.curry(getBackupPaths)(_, policy, ignorePatterns), prop('fullPath'))],
+                [T,                                 always(Observable.never())]
+            ]))
         ))
     ))
 )
@@ -86,7 +89,7 @@ const getBackupPolicyAsync = pipe(
     readFirstLineAsync,
     then(pipe(
         trim,
-        val => includes(val, ['leaf', 'branch', 'ignore']) ? val : 'leaf'
+        ifElse(includes(_, ['leaf', 'branch', 'ignore']), identity, always('leaf'))
     )),
     otherwise(always('leaf'))
 )
