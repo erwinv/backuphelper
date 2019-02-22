@@ -71,7 +71,7 @@ const globMatch = compose(
 )
 const flatMapWCL = invoker(2, 'flatMapWithConcurrencyLimit')
 const flatMapError = invoker(1, 'flatMapError')
-const concurrencyLimit = compose(max(2), Math.floor, divide(_, 8), length)(os.cpus())
+const concurrencyLimit = compose(max(4), Math.floor, divide(_, 8), length)(os.cpus())
 
 function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns=[]) {
     const policyP = Promise.resolve(
