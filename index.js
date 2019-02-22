@@ -83,20 +83,20 @@ function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns
     const policyAndPatternsP = Promise.join(policyP, patternsP,
         (policy, ignorepatterns) => ({policy, ignorepatterns}))
 
-    const flatMap = invoker(1, 'flatMap')
+    const flatMapWCL = invoker(2, 'flatMapWithConcurrencyLimit')
     const flatMapError = invoker(1, 'flatMapError')
 
     return call(pipe(
         always(policyAndPatternsP),
         Observable.fromPromise,
-        flatMap(({policy, ignorepatterns}) =>
+        flatMapWCL(1, ({policy, ignorepatterns}) =>
             policy == 'ignore' ? Observable.never() :
             call(pipe(
                 always(dir),
                 readdirAsync,
                 Observable.fromPromise,
                 flatMapError(always(Observable.never())),
-                flatMap(pipe(
+                flatMapWCL(1, pipe(
                     filter(compose(not, globMatch(ignorepatterns))),
                     map(pipe(
                         base => ({dir, base}),
@@ -106,14 +106,14 @@ function getBackupPathsReactive(dir, parentpolicy='branch', parentignorepatterns
                     filter(compose(not, globMatch(ignorepatterns))),
                     Observable.fromArray
                 )),
-                flatMap(fullpath => call(pipe(
+                flatMapWCL(3, fullpath => call(pipe(
                     always(fullpath),
                     statAsync,
                     then(stats => ({fullpath, stats})),
                     Observable.fromPromise,
                     flatMapError(always(Observable.never()))
                 ))),
-                flatMap(({fullpath, stats}) =>
+                flatMapWCL(3, ({fullpath, stats}) =>
                     stats.isFile() ? Observable.once(fullpath) :
                     stats.isDirectory() ? getBackupPathsReactive(fullpath, policy, ignorepatterns) :
                     Observable.never()
@@ -139,7 +139,7 @@ if (runningAsMain) {
     const args = drop(2, process.argv)
     const [opts, [dir]] = partition(startsWith('--'), args)
 
-    const eagerLogging = !opts.includes('--silent') || opts.includes('--verbose')
+    const eagerLogging = !opts.includes('--quiet') || opts.includes('--verbose')
 
     const observable = getBackupPathsReactive(dir)
     if (eagerLogging)

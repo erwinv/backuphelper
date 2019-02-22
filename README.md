@@ -24,7 +24,7 @@ backuphelper $ node index.js /path/to/analyze
 
 ### Options
 
-- `--silent`|`--verbose`
+- `--quiet`|`--verbose`
 
 Default `--verbose`
 
