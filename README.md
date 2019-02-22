@@ -24,10 +24,9 @@ backuphelper $ node index.js /path/to/analyze
 
 ### Options
 
-- `--async` / `--reactive`
-- `--silent` / `--verbose`
+- `--silent`|`--verbose`
 
-Default options are `--reactive --verbose`
+Default `--verbose`
 
 ### Configuration files
 
