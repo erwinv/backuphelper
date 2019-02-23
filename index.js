@@ -1,37 +1,35 @@
 #!/usr/bin/env node
 
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const readline = require('readline')
 
-const Bacon = require('baconjs')
+const Observable = require('baconjs')
 const Promise = require('bluebird')
 const R = require('ramda')
 const globToRegExp = R.curry(require('glob-to-regexp'))
 const _ = R.__
 
-const readdirAsync = Promise.promisify(fs.readdir)
-const statAsync = Promise.promisify(fs.stat)
 const readFileAsync = R.curryN(2, Promise.promisify(fs.readFile))(_, 'utf8')
+const readdirAsync = R.curryN(2, Promise.promisify(fs.readdir))(_, 'utf8')
+const statAsync = R.curryN(1, Promise.promisify(fs.stat))
 
 const {
-    always, identity, not, F, flip,
+    always, T, identity, not, flip,
     call, pipe, compose,
+    either, ifElse, cond,
     then, otherwise,
-    map, filter, forEach, flatten, drop, append, partition,
+    length, map, filter, forEach, drop, append, partition,
     anyPass, includes,
+    divide, max, equals,
     test, startsWith, split, trim,
-    invoker, mergeLeft
+    prop, invoker, thunkify
 } = R
 
-const globMatch = compose(
-    anyPass,
-    map(compose(test, globToRegExp(_, {flags: 'i', extended: true})))
-)
-
-function readFirstLineAsync(filepath, encoding='utf8') {
+function readFirstLineAsync(filePath, encoding='utf8') {
     return new Promise((resolve, reject) => {
-        const readStream = fs.createReadStream(filepath, encoding)
+        const readStream = fs.createReadStream(filePath, encoding)
             .on('error', reject)
         readline.createInterface({input: readStream})
             .on('line', line => {
@@ -41,273 +39,109 @@ function readFirstLineAsync(filepath, encoding='utf8') {
     })
 }
 
-function getBackupPolicyAsync(dir) {
-    const policyfile = path.join(dir, '.backuppolicy')
-    const isValidPolicy = flip(includes)(['leaf', 'branch', 'ignore'])
-    return call(pipe(
-        always(policyfile),
-        readFirstLineAsync,
-        then(pipe(
-            trim,
-            val => isValidPolicy(val) ? val : 'leaf'
-        )),
-        otherwise(always('leaf'))
-    ))
-}
+const globMatch = compose(
+    anyPass,
+    map(compose(test, globToRegExp(_, {flags: 'i', extended: true})))
+)
+const flatMapWithConcurrencyLimit = invoker(2, 'flatMapWithConcurrencyLimit')
+const flatMapError = invoker(1, 'flatMapError')
+const concurrencyLimit = compose(max(4), Math.floor, divide(_, 8), length)(os.cpus())
 
-function getIgnorePatternsAsync(dir) {
-    const patternfile = path.join(dir, '.backupignore')
-    return call(pipe(
-        always(patternfile),
-        readFileAsync,
-        then(pipe(
-            split(/\r?\n/),
-            map(trim),
-            filter(compose(not, startsWith('#')))
-        )),
-        otherwise(always([]))
-    ))
-}
-
-function getBackupPaths(variant='reactive') {
-    const [
-        monadZero,
-        monadId, monadBind, monadBindErr,
-        spread, spreadMap
-    ] =
-    variant == 'async' ? [
-        Promise.resolve([]),
-        Promise.resolve, then, otherwise,
-        identity, mapFn => pipe(map(mapFn), Promise.all, then(flatten))
-    ] : [
-        Bacon.never(),
-        compose(Bacon.fromPromise, Promise.resolve), invoker(1, 'flatMap'), invoker(1, 'flatMapError'),
-        Bacon.fromArray, identity
-    ]
-
-    function _getBackupPaths(dir, parentpolicy='branch', parentignorepatterns=[]) {
-        const policyP = Promise.resolve(
-            parentpolicy == 'branch' ?
-                getBackupPolicyAsync(dir) :
-                parentpolicy
-        )
-        const patternsP = Promise.resolve(
-            parentpolicy == 'branch' ?
-                getIgnorePatternsAsync(dir) :
-                parentignorepatterns
-        )
-        const policyAndPatternsP = Promise.join(policyP, patternsP,
-            (policy, ignorepatterns) => ({policy, ignorepatterns}))
-
-        return call(pipe(
-            always(policyAndPatternsP),
-            monadId,
-            monadBind(({policy, ignorepatterns}) =>
-                policy == 'ignore' ? monadZero :
-                call(pipe(
-                    always(dir),
-                    readdirAsync,
-                    monadId,
-                    monadBindErr(always(monadZero)),
-                    monadBind(pipe(
-                        filter(compose(not, globMatch(ignorepatterns))),
-                        map(pipe(
-                            base => ({dir, base}),
-                            path.format,
-                            path.normalize
-                        )),
-                        filter(compose(not, globMatch(ignorepatterns)))
-                    )),
-                    monadBind(spread),
-                    monadBind(
-                        spreadMap(
-                            fullpath => call(pipe(
-                                always(fullpath),
-                                statAsync,
-                                otherwise(always({isFile: F, isDirectory: F})),
-                                then(stats => ({fullpath, stats})),
-                                monadId
-                            ))
-                        )
-                    ),
-                    monadBind(
-                        spreadMap(
-                            ({fullpath, stats}) =>
-                                stats.isFile() ? monadId(fullpath) :
-                                stats.isDirectory() ? _getBackupPaths(fullpath, policy, ignorepatterns) :
-                                monadZero
-                        )
-                    )
-                ))
-            )
-        ))
-    }
-    return dir => {
-        const monad = _getBackupPaths(dir)
-        return mergeLeft(monad, {
-            then: variant == 'async' ?
-                flip(then)(monad) :
-                flip(then)(call(pipe(
-                    always(monad),
-                    invoker(2, 'reduce')([], flip(append)),
-                    invoker(1, 'toPromise')(Promise)
-                ))),
-            onValue: variant == 'reactive' ?
-                flip(invoker(1, 'onValue'))(monad) :
-                compose(flip(then)(monad), forEach)
-        })
-    }
-}
-
-function getBackupPathsAsync(dir, parentpolicy='branch', parentignorepatterns=[]) {
-    const policyP = Promise.resolve(
-        parentpolicy == 'branch' ?
-            getBackupPolicyAsync(dir) :
-            parentpolicy
-    )
-    const patternsP = Promise.resolve(
-        parentpolicy == 'branch' ?
-            getIgnorePatternsAsync(dir) :
-            parentignorepatterns
-    )
-    return Promise.join(policyP, patternsP, (policy, ignorepatterns) =>
-        policy == 'ignore' ? Promise.resolve([]) :
-        call(pipe(
-            always(dir),
-            readdirAsync,
-            otherwise(always([])),
-            then(pipe(
-                filter(compose(not, globMatch(ignorepatterns))),
+const getBackupPathsReactive = pipe(
+    flatMapWithConcurrencyLimit(1, ifElse(
+        compose(equals('ignore'), prop('policy')),
+        always(Observable.never()),
+        ({dir, policy, ignorePatterns}) => call(pipe(
+            thunkify(readdirAsync)(dir),
+            Observable.fromPromise,
+            flatMapError(always(Observable.never())),
+            flatMapWithConcurrencyLimit(1, pipe(
+                filter(compose(not, globMatch(ignorePatterns))),
                 map(pipe(
                     base => ({dir, base}),
                     path.format,
                     path.normalize
                 )),
-                filter(compose(not, globMatch(ignorepatterns)))
+                filter(compose(not, globMatch(ignorePatterns))),
+                Observable.fromArray
             )),
-            then(pipe(
-                map(fullpath => call(pipe(
-                    always(fullpath),
-                    statAsync,
-                    otherwise(always({isFile: F, isDirectory: F})),
-                    then(stats => ({fullpath, stats}))
-                ))),
-                Promise.all
-            )),
-            then(pipe(
-                map(({fullpath, stats}) =>
-                    stats.isFile() ? Promise.resolve([fullpath]) :
-                    stats.isDirectory() ? getBackupPathsAsync(fullpath, policy, ignorepatterns) :
-                    Promise.resolve([])
-                ),
-                Promise.all,
-                then(flatten)
-            ))
-        ))
-    )
-}
-
-function getBackupPathsRx(dir, parentpolicy='branch', parentignorepatterns=[]) {
-    const policyP = Promise.resolve(
-        parentpolicy == 'branch' ?
-            getBackupPolicyAsync(dir) :
-            parentpolicy
-    )
-    const patternsP = Promise.resolve(
-        parentpolicy == 'branch' ?
-            getIgnorePatternsAsync(dir) :
-            parentignorepatterns
-    )
-    const policyAndPatternsP = Promise.join(policyP, patternsP,
-        (policy, ignorepatterns) => ({policy, ignorepatterns}))
-
-    const flatMap = invoker(1, 'flatMap')
-    const flatMapError = invoker(1, 'flatMapError')
-
-    return call(pipe(
-        always(policyAndPatternsP),
-        Bacon.fromPromise,
-        flatMap(({policy, ignorepatterns}) =>
-            policy == 'ignore' ? Bacon.never() :
-            call(pipe(
-                always(dir),
-                readdirAsync,
-                Bacon.fromPromise,
-                flatMapError(always(Bacon.never())),
-                flatMap(pipe(
-                    filter(compose(not, globMatch(ignorepatterns))),
-                    map(pipe(
-                        base => ({dir, base}),
-                        path.format,
-                        path.normalize
-                    )),
-                    filter(compose(not, globMatch(ignorepatterns))),
-                    Bacon.fromArray
+            flatMapWithConcurrencyLimit(concurrencyLimit, fullPath => call(pipe(
+                thunkify(statAsync)(fullPath),
+                then(pipe(
+                    stats => ({isFile: stats.isFile(), isDirectory: stats.isDirectory()}),
+                    stats => ({fullPath, stats})
                 )),
-                flatMap(fullpath => call(pipe(
-                    always(fullpath),
-                    statAsync,
-                    then(stats => ({fullpath, stats})),
-                    Bacon.fromPromise,
-                    flatMapError(always(Bacon.never()))
-                ))),
-                flatMap(({fullpath, stats}) =>
-                    stats.isFile() ? Bacon.once(fullpath) :
-                    stats.isDirectory() ? getBackupPathsRx(fullpath, policy, ignorepatterns) :
-                    Bacon.never()
-                )
-            ))
-        )
+                Observable.fromPromise,
+                flatMapError(always(Observable.never()))
+            ))),
+            flatMapWithConcurrencyLimit(concurrencyLimit, cond([
+                [R.path(['stats', 'isFile']),       compose(Observable.once, prop('fullPath'))],
+                [R.path(['stats', 'isDirectory']),  compose(R.curry(getBackupPaths)(_, policy, ignorePatterns), prop('fullPath'))],
+                [T,                                 always(Observable.never())]
+            ]))
+        ))
     ))
-}
+)
 
-Object.assign(module.exports, {
-    getBackupPolicyAsync,
-    getIgnorePatternsAsync,
-    getBackupPathsAsync,
-    getBackupPathsRx,
-    getBackupPaths
-})
+const getBackupPolicyAsync = pipe(
+    R.curryN(2, path.join)(_, '.backuppolicy'),
+    readFirstLineAsync,
+    then(pipe(
+        trim,
+        ifElse(includes(_, ['leaf', 'branch', 'ignore']), identity, always('leaf'))
+    )),
+    otherwise(always('leaf'))
+)
+const getIgnorePatternsAsync = pipe(
+    R.curryN(2, path.join)(_, '.backupignore'),
+    readFileAsync,
+    then(pipe(
+        split(/\r?\n/),
+        map(trim),
+        filter(compose(not, startsWith('#')))
+    )),
+    otherwise(always([]))
+)
+const resolvePolicy = ifElse(
+    compose(equals('branch'), prop('parentPolicy')),
+    compose(getBackupPolicyAsync, prop('dir')),
+    compose(Promise.resolve, prop('parentPolicy'))
+)
+const resolveIgnorePatterns = ifElse(
+    compose(equals('branch'), prop('parentPolicy')),
+    compose(getIgnorePatternsAsync, prop('dir')),
+    compose(Promise.resolve, prop('parentIgnorePatterns'))
+)
+
+function getBackupPaths(dir, parentPolicy='branch', parentIgnorePatterns=[]) {
+    const dirPolicyAndIgnorePatterns = Promise.join(
+        resolvePolicy({dir, parentPolicy}),
+        resolveIgnorePatterns({dir, parentPolicy, parentIgnorePatterns}),
+        (policy, ignorePatterns) => ({dir, policy, ignorePatterns})
+    )
+    return getBackupPathsReactive(Observable.fromPromise(dirPolicyAndIgnorePatterns))
+}
 
 const runningAsMain = require.main == module && !module.parent
 if (runningAsMain) {
     const console = require('console')
     const process = require('process')
 
-    if (process.argv.length < 3)
+    if (length(process.argv) < 3)
         return console.error('no dirpath given')
-    const args = drop(2, process.argv)
-    const [opts, [dir]] = partition(startsWith('--'), args)
 
-    const useUnifiedImpl = opts.includes('--unified')
-    const useReactive = !opts.includes('--async') || opts.includes('--reactive')
-    const eagerLogging = !opts.includes('--silent') || opts.includes('--verbose')
-    // silent (non-eager logging) means dump all results at the very end,
-    //      i.e., complete the whole list before starting printing
-    // verbose (eager logging) means dump results immediately,
-    //      i.e., immediately print partial results
-    // --reactive supports both eager and non-eager logging
-    // --async doesn't support eager logging (go figure)
+    const getOpts = compose(partition(startsWith('--')), drop(2))
+    const eagerLogging = either(compose(not, includes('--quiet')), includes('--verbose'))
 
-    if (useUnifiedImpl) {
-        const variant = useReactive ? 'reactive' : 'async'
-        const monad = getBackupPaths(variant)(dir)
-        return eagerLogging ?
-            monad.onValue(console.log) :
-            monad.then(forEach(console.log))
-    }
-
-    if (!useReactive) {
-        const promise = getBackupPathsAsync(dir)
-        return promise.then(forEach(console.log))
-    }
-
-    const observable = getBackupPathsRx(dir)
-    return eagerLogging ?
-        observable
-            .onValue(console.log) :
+    const [opts, [dir]] = getOpts(process.argv)
+    const observable = getBackupPaths(dir)
+    if (eagerLogging(opts))
+        observable.onValue(console.log)
+    else
         observable
             .reduce([], flip(append))
             .toPromise(Promise)
             .then(forEach(console.log))
+} else {
+    module.exports = getBackupPaths
 }
