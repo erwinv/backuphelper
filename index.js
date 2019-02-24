@@ -105,15 +105,15 @@ const resolveIgnorePatterns = ifElse(
 )
 
 function getBackupPaths(dir, parentPolicy='branch', parentIgnorePatterns=[]) {
-    const dirIgnorePatternsAndRecursiveFn = Promise.join(
+    const dirPolicyIgnorePatternsAndRecursiveFn = Promise.join(
         resolvePolicy({dir, parentPolicy}),
         resolveIgnorePatterns({dir, parentPolicy, parentIgnorePatterns}),
         (policy, ignorePatterns) => assoc(
             'recursiveCall', dir => getBackupPaths(dir, policy, ignorePatterns),
-            {dir, ignorePatterns}
+            {dir, policy, ignorePatterns}
         )
     )
-    return getBackupPathsReactive(Observable.fromPromise(dirIgnorePatternsAndRecursiveFn))
+    return getBackupPathsReactive(Observable.fromPromise(dirPolicyIgnorePatternsAndRecursiveFn))
 }
 
 const runningAsMain = require.main == module && !module.parent
