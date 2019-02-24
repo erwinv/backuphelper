@@ -8,12 +8,11 @@ const readline = require('readline')
 const Observable = require('baconjs')
 const Promise = require('bluebird')
 const R = require('ramda')
-const globToRegExp = R.curry(require('glob-to-regexp'))
-const _ = R.__
+const readdir = require('readdir-enhanced')
 
+const _ = R.__
+const globToRegExp = R.curry(require('glob-to-regexp'))(_, {extended: true})
 const readFileAsync = R.curryN(2, Promise.promisify(fs.readFile))(_, 'utf8')
-const readdirAsync = R.curryN(2, Promise.promisify(fs.readdir))(_, 'utf8')
-const statAsync = R.curryN(1, Promise.promisify(fs.stat))
 
 const {
     always, T, identity, not, flip,
@@ -22,10 +21,46 @@ const {
     then, otherwise,
     length, map, filter, forEach, drop, append, partition,
     anyPass, includes,
-    divide, max, equals,
-    test, startsWith, split, trim,
-    prop, invoker, thunkify
+    equals, startsWith, test, split, trim,
+    assoc, prop, invoker, thunkify
 } = R
+
+function readdirReactive(dir, filter) {
+    const dirStream = readdir.stream.stat(dir, {filter, basePath: dir})
+    const endStream = Observable.fromEvent(dirStream, 'end').take(1)
+    const errorStream = Observable.fromEvent(dirStream, 'error')
+        .map(error => new Observable.Error(error))
+    const dataStream = Observable.fromEvent(dirStream, 'data')
+    return dataStream.merge(errorStream).takeUntil(endStream)
+}
+
+const globMatch = compose(anyPass, map(compose(test, globToRegExp)))
+const ignoreFilter = ignorePatterns => compose(
+    not, globMatch(ignorePatterns), path.basename, prop('path')
+)
+const flatMap = invoker(1, 'flatMap')
+const flatMapWithConcurrencyLimit = invoker(2, 'flatMapWithConcurrencyLimit')
+
+const getBackupPathsReactive = flatMap(
+    ifElse(
+        compose(equals('ignore'), prop('policy')),
+        always(Observable.never()),
+
+        ({dir, ignorePatterns, recursiveCall}) => call(pipe(
+            thunkify(readdirReactive)(dir, ignoreFilter(ignorePatterns)),
+            flatMap(Observable.try(stats => ({
+                path: stats.path,
+                isFile: stats.isFile(),
+                isDirectory: stats.isDirectory()
+            }))),
+            flatMapWithConcurrencyLimit(length(os.cpus()), cond([
+                [prop('isFile'),        compose(Observable.once, prop('path'))],
+                [prop('isDirectory'),   compose(recursiveCall, prop('path'))],
+                [T,                     always(Observable.never())]
+            ]))
+        ))
+    )
+)
 
 function readFirstLineAsync(filePath, encoding='utf8') {
     return new Promise((resolve, reject) => {
@@ -38,50 +73,6 @@ function readFirstLineAsync(filePath, encoding='utf8') {
             })
     })
 }
-
-const globMatch = compose(
-    anyPass,
-    map(compose(test, globToRegExp(_, {flags: 'i', extended: true})))
-)
-const flatMapWithConcurrencyLimit = invoker(2, 'flatMapWithConcurrencyLimit')
-const flatMapError = invoker(1, 'flatMapError')
-const concurrencyLimit = compose(max(4), Math.floor, divide(_, 8), length)(os.cpus())
-
-const getBackupPathsReactive = pipe(
-    flatMapWithConcurrencyLimit(1, ifElse(
-        compose(equals('ignore'), prop('policy')),
-        always(Observable.never()),
-        ({dir, policy, ignorePatterns}) => call(pipe(
-            thunkify(readdirAsync)(dir),
-            Observable.fromPromise,
-            flatMapError(always(Observable.never())),
-            flatMapWithConcurrencyLimit(1, pipe(
-                filter(compose(not, globMatch(ignorePatterns))),
-                map(pipe(
-                    base => ({dir, base}),
-                    path.format,
-                    path.normalize
-                )),
-                filter(compose(not, globMatch(ignorePatterns))),
-                Observable.fromArray
-            )),
-            flatMapWithConcurrencyLimit(concurrencyLimit, fullPath => call(pipe(
-                thunkify(statAsync)(fullPath),
-                then(pipe(
-                    stats => ({isFile: stats.isFile(), isDirectory: stats.isDirectory()}),
-                    stats => ({fullPath, stats})
-                )),
-                Observable.fromPromise,
-                flatMapError(always(Observable.never()))
-            ))),
-            flatMapWithConcurrencyLimit(concurrencyLimit, cond([
-                [R.path(['stats', 'isFile']),       compose(Observable.once, prop('fullPath'))],
-                [R.path(['stats', 'isDirectory']),  compose(R.curry(getBackupPaths)(_, policy, ignorePatterns), prop('fullPath'))],
-                [T,                                 always(Observable.never())]
-            ]))
-        ))
-    ))
-)
 
 const getBackupPolicyAsync = pipe(
     R.curryN(2, path.join)(_, '.backuppolicy'),
@@ -114,12 +105,15 @@ const resolveIgnorePatterns = ifElse(
 )
 
 function getBackupPaths(dir, parentPolicy='branch', parentIgnorePatterns=[]) {
-    const dirPolicyAndIgnorePatterns = Promise.join(
+    const dirIgnorePatternsAndRecursiveFn = Promise.join(
         resolvePolicy({dir, parentPolicy}),
         resolveIgnorePatterns({dir, parentPolicy, parentIgnorePatterns}),
-        (policy, ignorePatterns) => ({dir, policy, ignorePatterns})
+        (policy, ignorePatterns) => assoc(
+            'recursiveCall', dir => getBackupPaths(dir, policy, ignorePatterns),
+            {dir, ignorePatterns}
+        )
     )
-    return getBackupPathsReactive(Observable.fromPromise(dirPolicyAndIgnorePatterns))
+    return getBackupPathsReactive(Observable.fromPromise(dirIgnorePatternsAndRecursiveFn))
 }
 
 const runningAsMain = require.main == module && !module.parent

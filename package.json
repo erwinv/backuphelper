@@ -12,7 +12,8 @@
     "baconjs": "^2.0.11",
     "bluebird": "^3.5.3",
     "glob-to-regexp": "^0.4.0",
-    "ramda": "^0.26.1"
+    "ramda": "^0.26.1",
+    "readdir-enhanced": "^2.2.4"
   },
   "devDependencies": {
     "eslint": "^5.13.0"
