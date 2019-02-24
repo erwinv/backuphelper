@@ -40,6 +40,7 @@ const ignoreFilter = ignorePatterns => compose(
 )
 const flatMap = invoker(1, 'flatMap')
 const flatMapWithConcurrencyLimit = invoker(2, 'flatMapWithConcurrencyLimit')
+const numCores = length(os.cpus())
 
 const getBackupPathsReactive = flatMap(
     ifElse(
@@ -53,7 +54,7 @@ const getBackupPathsReactive = flatMap(
                 isFile: stats.isFile(),
                 isDirectory: stats.isDirectory()
             }))),
-            flatMapWithConcurrencyLimit(length(os.cpus()), cond([
+            flatMapWithConcurrencyLimit(numCores, cond([
                 [prop('isFile'),        compose(Observable.once, prop('path'))],
                 [prop('isDirectory'),   compose(recursiveCall, prop('path'))],
                 [T,                     always(Observable.never())]
