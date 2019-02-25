@@ -21,7 +21,7 @@ const {
     then, otherwise,
     length, map, filter, forEach, drop, append, partition,
     anyPass, includes,
-    equals, startsWith, test, split, trim,
+    equals, startsWith, test, split, trim, join,
     assoc, prop, invoker, thunkify
 } = R
 
@@ -131,7 +131,10 @@ if (runningAsMain) {
     const [opts, [dir]] = getOpts(process.argv)
     const observable = getBackupPaths(dir)
     if (eagerLogging(opts))
-        observable.onValue(console.log)
+        observable
+            .bufferWithCount(64)
+            .map(join('\n'))
+            .onValue(console.log)
     else
         observable
             .reduce([], flip(append))

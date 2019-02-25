@@ -16,6 +16,11 @@
     "readdir-enhanced": "^2.2.4"
   },
   "devDependencies": {
+    "@types/baconjs": "^0.7.33",
+    "@types/bluebird": "^3.5.25",
+    "@types/node": "^11.9.5",
+    "@types/ramda": "^0.25.50",
+    "@types/readdir-enhanced": "^2.2.1",
     "eslint": "^5.13.0"
   }
 }
